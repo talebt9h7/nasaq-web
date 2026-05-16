@@ -207,35 +207,88 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 export const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
+/**
+ * دالة للتحقق من سلامة الاتصال بـ Supabase
+ */
+export const checkSupabaseConnection = async (): Promise<{ success: boolean; error?: string }> => {
+  if (!supabase) return { success: false, error: "Supabase keys are missing in .env file" };
+  try {
+    const { error } = await supabase.from('site_settings').select('id').limit(1);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+};
+
 export const fetchAppData = async (): Promise<AppData> => {
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('app_data').select('data').eq('id', 1).single();
-      if (data && data.data) {
-        return { ...defaultData, ...data.data };
-      }
+      // جلب البيانات من جميع الجداول في وقت واحد باستخدام Promise.all
+      const [
+        { data: settings },
+        { data: services },
+        { data: projects },
+        { data: testimonials },
+        { data: requests }
+      ] = await Promise.all([
+        supabase.from('site_settings').select('*').eq('id', 1).single(),
+        supabase.from('services').select('*').order('id'),
+        supabase.from('projects').select('*').order('id'),
+        supabase.from('testimonials').select('*').order('id'),
+        supabase.from('requests').select('*').order('id')
+      ]);
+
+      return {
+        companyInfo: (settings as any)?.company_info || defaultData.companyInfo,
+        content: (settings as any)?.content || defaultData.content,
+        analytics: (settings as any)?.analytics || defaultData.analytics,
+        // إذا كانت الجداول فارغة، نستخدم البيانات الافتراضية بدلاً من مصفوفة فارغة
+        services: (services && services.length > 0) ? (services as Service[]) : defaultData.services,
+        projects: (projects && projects.length > 0) ? (projects as Project[]) : defaultData.projects,
+        testimonials: (testimonials && testimonials.length > 0) ? (testimonials as Testimonial[]) : defaultData.testimonials,
+        requests: (requests as ServiceRequest[]) || []
+      };
     } catch (e) {
       console.error("Supabase fetch error:", e);
     }
   }
   
-  // Fallback to local storage if Supabase is not configured or fails
-  const local = localStorage.getItem('nasaq_data');
-  if (local) {
-    return { ...defaultData, ...JSON.parse(local) };
-  }
+  // Fallback to default data if Supabase is not configured or fails
   return defaultData;
 };
 
 export const saveAppData = async (newData: AppData): Promise<void> => {
   if (supabase) {
     try {
-      await supabase.from('app_data').upsert({ id: 1, data: newData });
+      // حفظ البيانات في الجداول المخصصة
+      // ملاحظة: الـ upsert هنا سيعمل على تحديث الصفوف بناءً على الـ id
+      await Promise.all([
+        supabase.from('site_settings').upsert({ 
+          id: 1, 
+          company_info: newData.companyInfo, 
+          content: newData.content, 
+          analytics: newData.analytics 
+        }),
+        supabase.from('services').upsert(newData.services),
+        supabase.from('projects').upsert(newData.projects),
+        supabase.from('testimonials').upsert(newData.testimonials),
+        supabase.from('requests').upsert(newData.requests)
+      ]);
     } catch (e) {
       console.error("Supabase save error:", e);
     }
   }
-  
-  // Always save locally as backup/optimistic fallback
-  localStorage.setItem('nasaq_data', JSON.stringify(newData));
+};
+
+export const submitNewRequest = async (request: ServiceRequest): Promise<void> => {
+  if (supabase) {
+    try {
+      const { error } = await supabase.from('requests').insert([request]);
+      if (error) throw error;
+    } catch (e) {
+      console.error("Error submitting request:", e);
+      throw e;
+    }
+  }
 };

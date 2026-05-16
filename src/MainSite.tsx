@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  ArrowLeft, ArrowUpRight, BarChart3, Camera, CheckCircle, Code2, Globe, Mail, MapPin, Menu, Palette, Phone, Play, Send, Star, TrendingUp, X
+  AlertTriangle, ArrowLeft, ArrowUpRight, BarChart3, Camera, CheckCircle, Code2, Globe, Mail, MapPin, Menu, Palette, Phone, Play, Send, Star, TrendingUp, X
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AppData, fetchAppData, saveAppData, defaultData, ServiceRequest } from './store';
+import { AppData, fetchAppData, saveAppData, defaultData, ServiceRequest, submitNewRequest, checkSupabaseConnection } from './store';
 
 type LogoSize = 'sm' | 'md' | 'lg' | 'xl';
 const brandLogo = '/brand/nasaq-logo.svg';
@@ -74,16 +74,27 @@ const iconMap: Record<string, ReactNode> = {
 export default function MainSite() {
   const [data, setData] = useState<AppData>(defaultData);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   const [selectedService, setSelectedService] = useState('');
   const [sent, setSent] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const [activeProject, setActiveProject] = useState('الكل');
   const [testimonialIndex, setTestimonialIndex] = useState(0);
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', service: '', message: '' });
 
   useEffect(() => {
+    // التحقق من الاتصال عند التحميل
+    checkSupabaseConnection().then(res => {
+      if (!res.success) {
+        console.warn("Supabase Connection Issue:", res.error);
+        setConnectionError(res.error || "خطأ في الاتصال بقاعدة البيانات");
+      }
+    });
+
     fetchAppData().then((fetchedData) => {
       setData(fetchedData);
       setIsLoaded(true);
@@ -132,39 +143,43 @@ export default function MainSite() {
     setSelectedService(service);
     setFormData((current) => ({ ...current, service }));
     setSent(false);
+    setSubmitError(null);
     setRequestOpen(true);
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    
-    const newRequest: ServiceRequest = {
-      id: Date.now().toString(),
-      name: formData.name,
-      phone: formData.phone,
-      email: formData.email,
-      service: formData.service || selectedService,
-      message: formData.message,
-      date: new Date().toLocaleDateString('ar-IQ'),
-      status: 'new'
-    };
+    setIsSubmitting(true);
+    setSubmitError(null);
 
-    const newData = {
-      ...data,
-      requests: [...data.requests, newRequest]
-    };
-    
-    setData(newData);
-    await saveAppData(newData);
+    try {
+      const newRequest: ServiceRequest = {
+        id: Date.now().toString(),
+        name: formData.name,
+        phone: formData.phone,
+        email: formData.email,
+        service: formData.service || selectedService,
+        message: formData.message,
+        date: new Date().toLocaleDateString('ar-IQ'),
+        status: 'new'
+      };
 
-    setRequestOpen(true);
-    setSent(true);
-    window.setTimeout(() => {
-      setSent(false);
-      setRequestOpen(false);
-      setSelectedService('');
-      setFormData({ name: '', phone: '', email: '', service: '', message: '' });
-    }, 2600);
+      await submitNewRequest(newRequest);
+      setData(prev => ({ ...prev, requests: [...prev.requests, newRequest] }));
+
+      setSent(true);
+      window.setTimeout(() => {
+        setSent(false);
+        setRequestOpen(false);
+        setSelectedService('');
+        setFormData({ name: '', phone: '', email: '', service: '', message: '' });
+        setIsSubmitting(false);
+      }, 2600);
+    } catch (error) {
+      console.error("Submission failed:", error);
+      setSubmitError("عذراً، تعذر إرسال طلبك حالياً. يرجى التحقق من اتصالك بالإنترنت والمحاولة مرة أخرى.");
+      setIsSubmitting(false);
+    }
   };
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -173,6 +188,17 @@ export default function MainSite() {
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#123EAD] text-white selection:bg-[#fff200] selection:text-[#123EAD]" dir="rtl">
+      {/* تنبيه في حال وجود خطأ في الاتصال (يظهر للمطور أو في لوحة التحكم) */}
+      {connectionError && (
+        <div className="fixed bottom-4 left-4 z-[100] flex items-center gap-3 rounded-xl bg-red-600 p-4 text-white shadow-2xl">
+          <AlertTriangle className="h-5 w-5" />
+          <div className="text-sm font-bold">
+            تنبيه: الموقع يعمل بالبيانات الافتراضية (Offline Mode)
+            <div className="text-[10px] opacity-75">{connectionError}</div>
+          </div>
+        </div>
+      )}
+
       <motion.nav
         initial={{ y: -80 }}
         animate={{ y: 0 }}
@@ -482,8 +508,15 @@ export default function MainSite() {
               تفاصيل المشروع
               <textarea name="message" value={formData.message} onChange={handleChange} rows={5} className="mt-2 w-full resize-none rounded-3xl border border-white/15 bg-white/10 px-5 py-4 text-white outline-none transition placeholder:text-white/35 focus:border-[#fff200]" placeholder="اكتب هدفك، نوع نشاطك، والخدمة التي تحتاجها..." />
             </label>
-            <button type="submit" className="mt-7 inline-flex w-full items-center justify-center gap-3 rounded-full bg-[#fff200] px-8 py-5 text-lg font-black text-[#123EAD] transition hover:-translate-y-1 hover:shadow-[0_18px_50px_rgba(255,242,0,0.22)]">
-              <Send className="h-5 w-5" /> إرسال الطلب
+            
+            {submitError && <p className="mt-4 text-sm font-bold text-red-400">{submitError}</p>}
+            
+            <button 
+              type="submit" 
+              disabled={isSubmitting}
+              className={`mt-7 inline-flex w-full items-center justify-center gap-3 rounded-full bg-[#fff200] px-8 py-5 text-lg font-black text-[#123EAD] transition hover:-translate-y-1 hover:shadow-[0_18px_50px_rgba(255,242,0,0.22)] ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              <Send className="h-5 w-5" /> {isSubmitting ? 'جاري الإرسال...' : 'إرسال الطلب'}
             </button>
           </form>
         </div>
@@ -542,8 +575,15 @@ export default function MainSite() {
                     )}
                     <textarea name="message" value={formData.message} onChange={handleChange} required rows={4} className="w-full resize-none rounded-3xl border border-[#123EAD]/15 px-5 py-4 outline-none focus:border-[#123EAD]" placeholder="تفاصيل المشروع" />
                   </div>
-                  <button type="submit" className="mt-6 flex w-full items-center justify-center gap-3 rounded-full bg-[#123EAD] px-7 py-4 font-black text-white transition hover:bg-[#0f3494]">
-                    <Send className="h-5 w-5" /> إرسال الطلب
+                  
+                  {submitError && <p className="mt-4 text-sm font-bold text-red-600">{submitError}</p>}
+                  
+                  <button 
+                    type="submit" 
+                    disabled={isSubmitting}
+                    className={`mt-6 flex w-full items-center justify-center gap-3 rounded-full bg-[#123EAD] px-7 py-4 font-black text-white transition hover:bg-[#0f3494] ${isSubmitting ? 'opacity-50' : ''}`}
+                  >
+                    <Send className="h-5 w-5" /> {isSubmitting ? 'جاري الإرسال...' : 'إرسال الطلب'}
                   </button>
                 </form>
               )}
